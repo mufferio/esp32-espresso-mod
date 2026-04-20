@@ -1,25 +1,33 @@
 #include <Arduino.h>
-// ── PIN MAP ──────────────────────────────
-#define MAXCLK   18
-#define MAXCS     5
-#define MAXDO    19
-#define SSR_PIN  26
-#define OLED_SDA 21
-#define OLED_SCL 22
-// Phase 2 (not wired yet, reserved)
-// #define TRIAC_ZC    4
-// #define TRIAC_DIM   2
-// #define PRESSURE_ADC 34
-// Phase 3 (not wired yet, reserved)
-// #define SOLENOID_RELAY 25
-// ─────────────────────────────────────────
+#include <Adafruit_MAX31855.h>
+
+#define MAXCLK  18
+#define MAXCS    5
+#define MAXDO   19
+
+Adafruit_MAX31855 thermocouple(MAXCLK, MAXCS, MAXDO);
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("ESP32 Coffee Machine - Ready!");
+  delay(500);
+  Serial.println("MAX31855 test starting...");
 }
 
 void loop() {
-  Serial.println("ESP32 alive - " + String(millis()) + "ms");
+  double temp = thermocouple.readCelsius();
+
+
+  if (isnan(temp)) {
+    Serial.println("Thermocouple fault!");
+    uint8_t e = thermocouple.readError();
+    if (e & MAX31855_FAULT_OPEN)      Serial.println("FAULT: Open circuit - check thermocouple connections");
+    if (e & MAX31855_FAULT_SHORT_GND) Serial.println("FAULT: Short to GND");
+    if (e & MAX31855_FAULT_SHORT_VCC) Serial.println("FAULT: Short to VCC");
+  } else {
+    Serial.print("Temp: ");
+    Serial.print(temp);
+    Serial.println(" C");
+  }
+
   delay(1000);
 }
