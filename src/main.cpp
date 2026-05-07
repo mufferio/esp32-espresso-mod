@@ -22,12 +22,12 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
 // ── PID SETTINGS ─────────────────────────
 #define TARGET_TEMP  93.0
-#define KP           25.0
-#define KI           0.05
-#define KD           1.0
+#define KP           20.0
+#define KI           0.02
+#define KD           8.0
 // ─────────────────────────────────────────
 
-unsigned long windowSize = 2000;
+unsigned long windowSize = 1000;
 unsigned long windowStartTime;
 
 Adafruit_MAX31855 thermocouple(MAXCLK, MAXCS, MAXDO);
@@ -94,7 +94,7 @@ void setup() {
 
   // PID init
 myPID.SetOutputLimits(0, windowSize);
-  myPID.SetSampleTime(250);
+  myPID.SetSampleTime(100);
   myPID.SetMode(AUTOMATIC);
   windowStartTime = millis();
 
@@ -104,8 +104,8 @@ myPID.SetOutputLimits(0, windowSize);
 void loop() {
   unsigned long now = millis();
 
-  // ── READ TEMP every 250ms ─────────────
-  if (now - lastTempRead >= 250) {
+  // ── READ TEMP every 100ms ─────────────
+  if (now - lastTempRead >= 100) {
     lastTempRead = now;
     double reading = thermocouple.readCelsius();
 
