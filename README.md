@@ -94,7 +94,3 @@ or use the device's IP address printed to the serial monitor on boot. The UI upd
 MIT — do whatever you want, no warranty implied.
 
 ---
-
-## Credits
-
-Built with the help of Claude. Inspired by the [Gaggiuino](https://github.com/Zer0-bit/gaggiuino) project.
