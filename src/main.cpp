@@ -8,6 +8,7 @@
 #include <ESPAsyncWebServer.h>
 #include <ESPmDNS.h>
 #include <ArduinoJson.h>
+#include "secrets.h"
 
 // ── PIN MAP ──────────────────────────────
 #define MAXCLK   18
@@ -18,11 +19,6 @@
 #define OLED_SCL 22
 // ─────────────────────────────────────────
 
-// ── WIFI ─────────────────────────────────
-const char* WIFI_SSID     = "YOUR_WIFI_SSID";
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
-// ─────────────────────────────────────────
-
 // ── OLED ─────────────────────────────────
 #define SCREEN_WIDTH  128
 #define SCREEN_HEIGHT  64
@@ -31,16 +27,21 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
 // ── TEMPERATURE TARGETS ──────────────────
 #define ESPRESSO_TEMP  97.0
-#define STEAM_TEMP    150.0
+#define STEAM_TEMP    140.0
 // ─────────────────────────────────────────
 
 // ── PID ──────────────────────────────────
 #define KP  20.0
 #define KI   0.02
 #define KD   8.0
+#define STEAM_KP  35.0
+#define STEAM_KI   0.05
+#define STEAM_KD   3.0
 unsigned long windowSize = 1000;
 unsigned long windowStartTime;
 double currentTemp, pidOutput, setpoint = ESPRESSO_TEMP;
+double espressoSetpoint = ESPRESSO_TEMP;
+double steamSetpoint    = STEAM_TEMP;
 PID myPID(&currentTemp, &pidOutput, &setpoint, KP, KI, KD, DIRECT);
 // ─────────────────────────────────────────
 
@@ -78,74 +79,142 @@ unsigned long lastDisplayUpdate = 0;
 unsigned long lastSerialPrint   = 0;
 
 // ── OLED STARTUP ANIMATION ───────────────
-void drawEye(int cx, int cy, int openHeight, bool showPupil) {
-  // Eye outline — always full size
-  display.drawRect(cx - 10, cy - 8, 20, 16, SSD1306_WHITE);
-  // Fill from bottom up based on openHeight (0=closed, 16=fully open)
-  if (openHeight > 0) {
-    int fillY = cy + 8 - openHeight;
-    display.fillRect(cx - 9, fillY, 18, openHeight, SSD1306_WHITE);
+
+static void drawFaceStructure() {
+  // Head outline with Frankenstein flat top
+  display.drawRect(16, 4, 96, 57, SSD1306_WHITE);
+  display.fillRect(17, 5, 94, 6, SSD1306_WHITE);    // flat-top fill
+
+  // Left neck bolt — cap + body
+  display.fillRect(5, 41, 8, 5,  SSD1306_WHITE);    // cap (wider)
+  display.fillRect(2, 44, 14, 14, SSD1306_WHITE);   // body
+
+  // Right neck bolt
+  display.fillRect(115, 41, 8,  5,  SSD1306_WHITE);
+  display.fillRect(112, 44, 14, 14, SSD1306_WHITE);
+}
+
+static void drawBrows() {
+  // Heavy furrowed brows — 3 px thick, inside corners lower (menacing)
+  for (int t = 0; t < 3; t++) {
+    display.drawLine(28, 20 + t, 51, 16 + t, SSD1306_WHITE);  // left
+    display.drawLine(77, 16 + t, 100, 20 + t, SSD1306_WHITE); // right (mirror)
   }
-  // Pupil — black circle in center
-  if (showPupil && openHeight >= 14) {
-    display.fillCircle(cx, cy, 4, SSD1306_BLACK);
-    // Pupil highlight
-    display.fillCircle(cx - 1, cy - 1, 1, SSD1306_WHITE);
+}
+
+// Eyes: 24 wide × 16 tall rectangular sockets, fill rises from bottom
+void drawEye(int cx, int cy, int openHeight, bool showPupil) {
+  const int W = 24, H = 16;
+  int x0 = cx - W / 2;
+  int y0 = cy - H / 2;
+
+  display.drawRect(x0, y0, W, H, SSD1306_WHITE);
+
+  if (openHeight > 0) {
+    int fh = min(openHeight, H - 2);
+    display.fillRect(x0 + 1, y0 + H - 1 - fh, W - 2, fh, SSD1306_WHITE);
+  }
+
+  if (showPupil) {
+    display.fillRect(cx - 4, cy - 3, 8, 7, SSD1306_BLACK); // pupil
+    display.fillRect(cx - 3, cy - 2, 2, 2, SSD1306_WHITE); // glint
+  }
+}
+
+static void drawStitchedMouth() {
+  display.drawLine(26, 50, 102, 50, SSD1306_WHITE);
+  for (int sx = 33; sx <= 97; sx += 8) {
+    display.drawLine(sx, 47, sx, 53, SSD1306_WHITE);
   }
 }
 
 void frankStartupAnimation() {
-  // Phase 1 — eyes opening from bottom up
-  for (int h = 0; h <= 16; h += 2) {
-    display.clearDisplay();
-    drawEye(38, 28, h, false);
-    drawEye(90, 28, h, false);
-    display.display();
-    delay(60);
-  }
+  const int LX = 42, RX = 86, EY = 33, EH = 16;
 
-  // Phase 2 — pupils appear
-  delay(200);
+  // Phase 1 — head emerges out of the dark
   display.clearDisplay();
-  drawEye(38, 28, 16, true);
-  drawEye(90, 28, 16, true);
+  drawFaceStructure();
+  display.display();
+  delay(500);
+
+  // Phase 2 — brows descend into place
+  drawBrows();
   display.display();
   delay(400);
 
-  // Phase 3 — natural blink (close fast, open fast)
-  for (int h = 16; h >= 0; h -= 4) {
+  // Phase 3 — eyes grind open, slow and heavy
+  for (int h = 0; h <= EH; h += 2) {
     display.clearDisplay();
-    drawEye(38, 28, h, h > 8);
-    drawEye(90, 28, h, h > 8);
+    drawFaceStructure();
+    drawBrows();
+    drawEye(LX, EY, h, false);
+    drawEye(RX, EY, h, false);
     display.display();
-    delay(30);
-  }
-  delay(80);
-  for (int h = 0; h <= 16; h += 4) {
-    display.clearDisplay();
-    drawEye(38, 28, h, h > 8);
-    drawEye(90, 28, h, h > 8);
-    display.display();
-    delay(30);
+    delay(80);
   }
 
-  // Phase 4 — loading bar "frank is awakening"
+  // Phase 4 — pupils lock in
+  delay(250);
+  display.clearDisplay();
+  drawFaceStructure();
+  drawBrows();
+  drawEye(LX, EY, EH, true);
+  drawEye(RX, EY, EH, true);
+  display.display();
+  delay(500);
+
+  // Phase 5 — single heavy blink
+  for (int h = EH; h >= 0; h -= 4) {
+    display.clearDisplay();
+    drawFaceStructure();
+    drawBrows();
+    drawEye(LX, EY, h, false);
+    drawEye(RX, EY, h, false);
+    display.display();
+    delay(25);
+  }
+  delay(100);
+  for (int h = 0; h <= EH; h += 4) {
+    display.clearDisplay();
+    drawFaceStructure();
+    drawBrows();
+    drawEye(LX, EY, h, h >= EH);
+    drawEye(RX, EY, h, h >= EH);
+    display.display();
+    delay(25);
+  }
+
+  // Phase 6 — stitched mouth drags into view
   delay(300);
+  display.clearDisplay();
+  drawFaceStructure();
+  drawBrows();
+  drawEye(LX, EY, EH, true);
+  drawEye(RX, EY, EH, true);
+  drawStitchedMouth();
+  display.display();
+  delay(700);
+
+  // Phase 7 — loading bar
+  // Yellow zone (y 0-15)  : "FRANK IS AWAKENING" text
+  // Blue zone  (y 16-63)  : face inner elements + progress bar
   for (int progress = 0; progress <= 100; progress += 2) {
     display.clearDisplay();
-    // Eyes stay open
-    drawEye(38, 20, 16, true);
-    drawEye(90, 20, 16, true);
-    // Text
+
     display.setTextSize(1);
     display.setTextColor(SSD1306_WHITE);
-    display.setCursor(10, 38);
-    display.print("frank is awakening");
-    // Loading bar outline
-    display.drawRect(10, 50, 108, 8, SSD1306_WHITE);
-    // Loading bar fill
-    int barFill = map(progress, 0, 100, 0, 104);
-    display.fillRect(12, 52, barFill, 4, SSD1306_WHITE);
+    display.setCursor(5, 4);
+    display.print("FRANK IS AWAKENING");
+
+    drawBrows();
+    drawEye(LX, EY, EH, true);
+    drawEye(RX, EY, EH, true);
+    drawStitchedMouth();
+
+    display.drawRect(18, 55, 92, 8, SSD1306_WHITE);
+    int barFill = map(progress, 0, 100, 0, 88);
+    display.fillRect(20, 57, barFill, 4, SSD1306_WHITE);
+
     display.display();
     delay(30);
   }
@@ -158,45 +227,60 @@ void updateDisplay() {
   display.clearDisplay();
   display.setTextColor(SSD1306_WHITE);
 
-  // Mode indicator top left
+  // ── YELLOW ZONE (y 0-15): Mode left, State right ─────────
   display.setTextSize(1);
-  display.setCursor(0, 0);
+
+  display.setCursor(0, 4);
   if (currentMode == MODE_STEAM) {
     display.print("~ STEAM ~");
   } else {
     display.print("ESPRESSO");
   }
 
-  // Milk mode indicator top right
+  bool atTarget = abs(currentTemp - setpoint) < 1.5;
+  const char* stateStr = atTarget ? "READY" : "HEAT";
+  display.setCursor(128 - (int)(strlen(stateStr) * 6), 4);
+  display.print(stateStr);
+
   if (milkModeEnabled) {
-    display.setCursor(90, 0);
-    display.print("MILK");
+    display.setCursor(61, 4);
+    display.print("M");
   }
 
-  // Current temp — big
+  display.drawLine(0, 15, 127, 15, SSD1306_WHITE); // zone separator
+
+  // ── BLUE ZONE (y 16-63): Temp, target, segmented bar, status ─
+
+  // Large current temperature
   display.setTextSize(2);
-  display.setCursor(0, 14);
+  display.setCursor(0, 18);
   display.print(currentTemp, 1);
   display.print((char)247);
   display.print("C");
 
-  // Target temp
+  // Target temperature
   display.setTextSize(1);
-  display.setCursor(0, 34);
+  display.setCursor(0, 37);
   display.print("TGT:");
   display.print(setpoint, 1);
   display.print((char)247);
   display.print("C");
 
-  // PWR bar
-  display.setCursor(0, 44);
-  display.print("PWR:");
-  int barWidth = map(pidOutput, 0, windowSize, 0, 88);
-  display.fillRect(28, 45, barWidth, 5, SSD1306_WHITE);
+  // Segmented power bar — 10 blocks of 9x7 px, 2 px gap, centred
+  int filledSegs = (int)((pidOutput / (double)windowSize) * 10.0);
+  filledSegs = constrain(filledSegs, 0, 10);
+  for (int i = 0; i < 10; i++) {
+    int sx = 10 + i * 11; // 9 px wide + 2 px gap
+    if (i < filledSegs) {
+      display.fillRect(sx, 46, 9, 7, SSD1306_WHITE);
+    } else {
+      display.drawRect(sx, 46, 9, 7, SSD1306_WHITE);
+    }
+  }
 
-  // State
-  display.setCursor(0, 54);
-  bool atTarget = abs(currentTemp - setpoint) < 1.5;
+  // Status line
+  display.setTextSize(1);
+  display.setCursor(0, 56);
   if (currentMode == MODE_STEAM) {
     display.print(atTarget ? "STEAM READY" : "STEAMING...");
   } else {
@@ -801,11 +885,11 @@ void setupWebServer() {
   // Status endpoint
   server.on("/status", HTTP_GET, [](AsyncWebServerRequest *req) {
     StaticJsonDocument<256> doc;
-    doc["temp"]          = currentTemp;
-    doc["power"]         = (int)((pidOutput / windowSize) * 100);
-    doc["mode"]          = currentMode == MODE_STEAM ? "steam" : "espresso";
-    doc["espressoTarget"] = setpoint == ESPRESSO_TEMP ? setpoint : ESPRESSO_TEMP;
-    doc["steamTarget"]   = STEAM_TEMP;
+    doc["temp"]           = currentTemp;
+    doc["power"]          = (int)((pidOutput / windowSize) * 100);
+    doc["mode"]           = currentMode == MODE_STEAM ? "steam" : "espresso";
+    doc["espressoTarget"] = espressoSetpoint;
+    doc["steamTarget"]    = steamSetpoint;
     doc["milkMode"]      = milkModeEnabled;
     doc["shotValid"]     = lastShot.valid;
     doc["shotAvg"]       = lastShot.avgTemp;
@@ -826,9 +910,12 @@ void setupWebServer() {
       String mode  = doc["mode"].as<String>();
       float  delta = doc["delta"].as<float>();
       if (mode == "espresso") {
-        setpoint = constrain(setpoint + delta, 85.0, 105.0);
+        espressoSetpoint = constrain(espressoSetpoint + delta, 85.0, 105.0);
+        if (currentMode == MODE_ESPRESSO) setpoint = espressoSetpoint;
+      } else if (mode == "steam") {
+        steamSetpoint = constrain(steamSetpoint + delta, 120.0, 144.0);
+        if (currentMode == MODE_STEAM) setpoint = steamSetpoint;
       }
-      // Steam target adjustment stored separately
       req->send(200);
     }
   );
@@ -843,10 +930,12 @@ void setupWebServer() {
       if (mode == "steam") {
         previousMode = currentMode;
         currentMode  = MODE_STEAM;
-        setpoint     = STEAM_TEMP;
+        setpoint     = steamSetpoint;
+        myPID.SetTunings(STEAM_KP, STEAM_KI, STEAM_KD);
       } else {
         currentMode  = MODE_ESPRESSO;
-        setpoint     = ESPRESSO_TEMP;
+        setpoint     = espressoSetpoint;
+        myPID.SetTunings(KP, KI, KD);
       }
       req->send(200);
     }
@@ -912,16 +1001,20 @@ void loop() {
     currentTemp = reading;
     myPID.Compute();
 
+    // Steam boost: full power when more than 3°C below setpoint
+    if (currentMode == MODE_STEAM && (setpoint - currentTemp) > 3.0) {
+      pidOutput = windowSize;
+    }
+
     // Milk mode — auto switch to steam when espresso ready and temp drops
     // (temp drop after shot indicates cold water hit boiler)
     if (milkModeEnabled && currentMode == MODE_ESPRESSO) {
       static float prevTemp = 0;
       if (prevTemp - currentTemp > 3.0 && currentTemp > 80.0) {
-        // Temperature dropped significantly — shot likely pulled
-        // Save shot log
-        // Auto switch to steam
+        // Temperature dropped — shot likely pulled; auto-switch to steam
         currentMode = MODE_STEAM;
-        setpoint    = STEAM_TEMP;
+        setpoint    = steamSetpoint;
+        myPID.SetTunings(STEAM_KP, STEAM_KI, STEAM_KD);
       }
       prevTemp = currentTemp;
     }
